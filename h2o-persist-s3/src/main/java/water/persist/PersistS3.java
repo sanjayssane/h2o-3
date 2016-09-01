@@ -39,7 +39,7 @@ public final class PersistS3 extends Persist {
           try {
             H2OAWSCredentialsProviderChain c = new H2OAWSCredentialsProviderChain();
             ClientConfiguration cc = s3ClientCfg();
-            _s3 = new AmazonS3Client(c, cc);
+            _s3 = configureClient(new AmazonS3Client(c, cc));
           } catch( Throwable e ) {
             e.printStackTrace();
             StringBuilder msg = new StringBuilder();
@@ -293,6 +293,9 @@ public final class PersistS3 extends Persist {
   public final static String S3_MAX_HTTP_CONNECTIONS_PROP = SYSTEM_PROP_PREFIX + "persist.s3.maxHttpConnections";
   /** S3 force HTTP traffic */
   public final static String S3_FORCE_HTTP = SYSTEM_PROP_PREFIX + "persist.s3.force.http";
+  /** S3 end-point, for example: "https://localhost:9000 */
+  public final static String S3_END_POINT = SYSTEM_PROP_PREFIX + "persist.s3.endPoint";
+
 
   static ClientConfiguration s3ClientCfg() {
     ClientConfiguration cfg = new ClientConfiguration();
@@ -304,6 +307,13 @@ public final class PersistS3 extends Persist {
     if (prop.containsKey(S3_FORCE_HTTP)) cfg.setProtocol(Protocol.HTTP);
 
     return cfg;
+  }
+
+  static  AmazonS3Client configureClient(AmazonS3Client s3Client) {
+    if (System.getProperty(S3_END_POINT) != null) {
+      s3Client.setEndpoint(System.getProperty(S3_END_POINT));
+    }
+    return s3Client;
   }
 
   // TODO needed if storing ice to S3
