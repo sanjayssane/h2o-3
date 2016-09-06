@@ -31,7 +31,6 @@ class Check:
 
         f = open(self.file_name, "r")
 
-        # commented out any mention of NOTE so an error is trigger if Notes need to be addressed
         allowed_regex_list = [
             r"^\* using log directory",
             r"^\* using R version",
@@ -47,11 +46,13 @@ class Check:
             r"^Maintainer:",
             r"^New maintainer:",
             r"^\s*Tom Kraljevic",
+            r"^\Version contains large components .*",
             r"^Insufficient package version .*",
             r"^\Days since last update: .*",
+            r"^\Size of tarball: .*",
             r"^Old maintainer\(s\):",
             r"^\s*Anqi Fu",
-            # r"^NOTE: There was 1 note.",
+            r"^NOTE: There was 1 note.",
 
             r"^\n",
             r"^New submission",
@@ -65,11 +66,11 @@ class Check:
             r"^  installed size is .*Mb",
             r"^  sub-directories of 1Mb or more:",
             r"^    java  .*Mb",
-            # r"^NOTE: There were 2 notes.",
+            r"^NOTE: There were 2 notes.",
             #r"^Status: 1 WARNING, 1 NOTE",
             #r"^Status: 1 WARNING, .* NOTEs",
-            # r"^Status: 2 NOTEs",
-            # r"^Status: 1 NOTE",
+            r"^Status: 2 NOTEs",
+            r"^Status: 1 NOTE",
             r"^See",
             r"^ .*/h2o-r/h2o\.Rcheck/00check\.log.*",
             r"^for details.",
