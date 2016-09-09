@@ -140,10 +140,12 @@ public abstract class Parser extends Iced {
           }
 
           // assume column names must appear in the first file.  If column names appear in first and other
-          // files, they will be recognized.  Otherwise, if no column name ever appear in first file, the other
+          // files, they will be recognized.  Otherwise, if no column name ever appear in the first file, the other
           // column names in the other files will not be recognized.
 
-          if (goodFile && (ps._check_header == ParseSetup.HAS_HEADER) && (this._setup._column_names != null)) {
+          if (goodFile) {
+            if (ps._check_header == ParseSetup.HAS_HEADER) {
+              if (this._setup._column_names != null) {
             // found header in later files, only incorporate it if the column names are the same as before
             String[] thisColumnName = this._setup.getColumnNames();
             String[] psColumnName = ps.getColumnNames();
@@ -157,6 +159,10 @@ public abstract class Parser extends Iced {
 
             if (sameColumnNames)
               this._setup.setCheckHeader(ps._check_header);
+          }
+            } else {  // take care of the case where the last file has header but this file does not.
+              this._setup.setCheckHeader(ps._check_header);
+            }
           }
 /*          if (this._setup._check_header == ParseSetup.HAS_HEADER) { //check for header on local file
             this._setup._check_header =
