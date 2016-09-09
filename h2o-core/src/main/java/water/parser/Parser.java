@@ -9,6 +9,7 @@ import java.io.IOException;
 import java.io.InputStream;
 import java.util.Arrays;
 import java.util.zip.ZipInputStream;
+
 import static water.parser.DefaultParserProviders.GUESS_INFO;
 
 /** A collection of utility classes for parsing.
@@ -129,9 +130,14 @@ public abstract class Parser extends Iced {
           // just check for number for number of columns here.  Ignore the column type, user can force it
           if (this._setup._number_columns == ps._number_columns)
             goodFile = true;
-          else
+          else {
+            String warning = "Your zip file contains a file that belong to another dataset with different " +
+                    "number of column.  Number of columns for files that have been parsed = "+
+                    this._setup._number_columns + ".  Number of columns in new file = "+ps._number_columns+
+                    ".  This new file is skipped and not parsed.";
+            dout.addError(new ParseWriter.ParseErr(warning, -1, -1L, -2L));
             goodFile = false;
-
+          }
 
           // assume column names must appear in the first file.  If column names appear in first and other
           // files, they will be recognized.  Otherwise, if no column name ever appear in first file, the other
@@ -158,6 +164,8 @@ public abstract class Parser extends Iced {
                             this._setup._chunk_size), this._setup);
           }*/
         } catch (Exception e) { // something is wrong parsing this file, do not parse in this case
+          String warning = "Your zip file contains a file that we cannot read for some reason";
+          dout.addError(new ParseWriter.ParseErr(warning, -1, -1L, -2L));
           goodFile = false;
         }
       }
