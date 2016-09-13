@@ -83,18 +83,111 @@ public abstract class Parser extends Iced {
     parseChunk(cidx, din, dout);     // Parse the remaining partial 32K buffer
     return dout;
   }
-  // ------------------------------------------------------------------------
-  // Zipped file; no parallel decompression; decompress into local chunks,
-  // parse local chunks; distribute chunks later.
-  ParseWriter streamParseZip( final InputStream is, final StreamParseWriter dout, InputStream bvs ) throws IOException {
-    // All output into a fresh pile of NewChunks, one per column
-    if (!_setup._parse_type.isParallelParseSupported) throw H2O.unimpl();
-    StreamData din = new StreamData(is);
+
+
+  /**
+   *   This method performs guess setup with each file.  If will return true only if the number of columns/separator
+   *   found in the current file match that of files parsed earlier.  In addition, it will also check for headers
+   *   within a file.  However, it will only check for headers if the user has included column names in the very
+   *   first file.
+   *
+   * @param is
+   * @param dout
+   * @param din
+   * @param cidx
+   * @return
+   * @throws IOException
+   */
+  private boolean checkFileNHeader(final InputStream is, final StreamParseWriter dout, StreamData din, int cidx)
+          throws IOException {
+
+    byte[] headerBytes = ZipUtil.unzipForHeader(din.getChunkData(cidx), this._setup._chunk_size);
+
+    ParseSetup ps = ParseSetup.guessSetup(null, headerBytes, GUESS_INFO, ParseSetup.GUESS_SEP,
+            ParseSetup.GUESS_COL_CNT, this._setup._single_quotes, ParseSetup.GUESS_HEADER,
+            null, null, null, null);
+
+    // check to make sure datasets in file belong to the same dataset
+    // just check for number for number of columns/separator here.  Ignore the column type, user can force it
+    if ((this._setup._number_columns != ps._number_columns) || (this._setup._separator != ps._separator)) {
+      String warning = "Your zip file contains a file that belong to another dataset with different " +
+              "number of column or separator.  Number of columns for files that have been parsed = "+
+              this._setup._number_columns + ".  Number of columns in new file = "+ps._number_columns+
+              ".  This new file is skipped and not parsed.";
+      dout.addError(new ParseWriter.ParseErr(warning, -1, -1L, -2L));
+
+      // something is wrong
+      return false;
+
+    } else {
+      // assume column names must appear in the first file.  If column names appear in first and other
+      // files, they will be recognized.  Otherwise, if no column name ever appear in the first file, the other
+      // column names in the other files will not be recognized.
+      if (ps._check_header == ParseSetup.HAS_HEADER) {
+        if (this._setup._column_names != null) {
+          // found header in later files, only incorporate it if the column names are the same as before
+          String[] thisColumnName = this._setup.getColumnNames();
+          String[] psColumnName = ps.getColumnNames();
+          Boolean sameColumnNames = true;
+          for (int index = 0; index < this._setup._number_columns; index++) {
+            if (!(thisColumnName[index].equals(psColumnName[index]))) {
+              sameColumnNames = false;
+              break;
+            }
+          }
+
+          if (sameColumnNames)
+            this._setup.setCheckHeader(ps._check_header);
+        }
+      } else {  // take care of the case where the last file has header but this file does not.
+        this._setup.setCheckHeader(ps._check_header);
+      }
+    }
+
+    return true;  // everything is fine
+  }
+
+  /**
+   * This method will try to get the next file to be parsed.  It will skip over directories if encountered.
+   *
+   * @param is
+   * @param din
+   * @throws IOException
+   */
+  private void getNextFile(final InputStream is, StreamData din) throws IOException {
+    if (is instanceof  java.util.zip.ZipInputStream) {
+
+      // sometimes we have system files that are directories and are zipped.  Need to remove them.
+      try { // when we are at the end of directory, getNextEntry() will return null.  If we call .isDirectory() on null,
+            // we will have a problem.  Previously, I do not call isDirectory() on getNextEntry() and that is why no
+            // exception was thrown.
+        while (((ZipInputStream) is).getNextEntry().isDirectory()) {
+          if (is.available() <= 0)   // move to next file if it exists and is not a directory
+            break;
+        }
+      } catch (Exception ex) {
+        Log.info("Reached end of directoryt");
+      }
+    }
+  }
+
+  /**
+   * This method reads in one zip file.  Before reading the file, it will check if the current file has the same
+   * number of columns and separator type as the previous files it has parssed.  If they do not match, no file will
+   * be parsed in this case.
+   *
+   * @param is
+   * @param dout
+   * @param bvs
+   * @param nextChunk
+   * @param zidx
+   * @return
+   * @throws IOException
+   */
+  private int readOneFile(final InputStream is, final StreamParseWriter dout, InputStream bvs,
+                          StreamParseWriter nextChunk, int zidx) throws IOException {
     int cidx = 0;
-    StreamParseWriter nextChunk = dout;
-    int zidx = bvs.read(null, 0, 0); // Back-channel read of chunk index
-    assert zidx == 1;
-//    int count = 0;
+    StreamData din = new StreamData(is);
 
     while (is.available() > 0) {
       int xidx = bvs.read(null, 0, 0); // Back-channel read of chunk index
@@ -108,92 +201,40 @@ public abstract class Parser extends Iced {
         nextChunk = nextChunk.nextChunk();
       }
 
-      if (cidx == 0) {
-        // We perform guess setup again and make sure that the files contain parts of the same dataset.  By that,
-        // we mean same number of columns, same column types.  This check is performed to make sure users may have
-        // added one extra file by mistake.  Instead of throwing an error, we just won't parse it.  Will generate
-        // a warning to user about this.  However, we do assume that you zip the same file types inside a directory.
-        // This is the best Tomas and I have come up with.  It is not perfect but
-        // it should work.  In addition, we still require that only the first file in the zip directory has header
-        // in them if the user wants to add the header names inside the dataset.  This is required so that flow and
-        // python/R clients respond the same way.  Again, this is not perfect.
-        byte[] headerBytes;
-
-        headerBytes = ZipUtil.unzipForHeader(din.getChunkData(cidx), this._setup._chunk_size);
-        ParseSetup ps = ParseSetup.guessSetup(null, headerBytes, GUESS_INFO, ParseSetup.GUESS_SEP,
-                ParseSetup.GUESS_COL_CNT, this._setup._single_quotes, ParseSetup.GUESS_HEADER,
-                null, null, null, null);
-
-        // check to make sure datasets in file belong to the same dataset
-        // just check for number for number of columns/separator here.  Ignore the column type, user can force it
-        if ((this._setup._number_columns != ps._number_columns) || (this._setup._separator != ps._separator)) {
-          String warning = "Your zip file contains a file that belong to another dataset with different " +
-                  "number of column or separator.  Number of columns for files that have been parsed = "+
-                  this._setup._number_columns + ".  Number of columns in new file = "+ps._number_columns+
-                  ".  This new file is skipped and not parsed.";
-          dout.addError(new ParseWriter.ParseErr(warning, -1, -1L, -2L));
-
-          if (is instanceof  java.util.zip.ZipInputStream)
-
-            // sometimes we have system files that are directories and are zipped.  Need to remove them.
-            try {
-              while (((ZipInputStream) is).getNextEntry().isDirectory())
-                ;   // move to next file if it exists and is not a directory
-            } catch (Exception ex) {
-              Log.info("Hitting every file already.  Done!");
-            }
-
-          if (is.available() > 0) {
-            din = new StreamData(is);
-            cidx = 0;
-          }
+      if (cidx == 0) { // perform header check to make sure all files contain same dataset and skip header if needed
+        if (!checkFileNHeader(is, dout, din, cidx)) {
+          return zidx;  // header is bad, quit now
         }
-
-        // assume column names must appear in the first file.  If column names appear in first and other
-        // files, they will be recognized.  Otherwise, if no column name ever appear in the first file, the other
-        // column names in the other files will not be recognized.
-        if (ps._check_header == ParseSetup.HAS_HEADER) {
-          if (this._setup._column_names != null) {
-            // found header in later files, only incorporate it if the column names are the same as before
-            String[] thisColumnName = this._setup.getColumnNames();
-            String[] psColumnName = ps.getColumnNames();
-            Boolean sameColumnNames = true;
-            for (int index = 0; index < this._setup._number_columns; index++) {
-              if (!(thisColumnName[index].equals(psColumnName[index]))) {
-                sameColumnNames = false;
-                break;
-              }
-            }
-
-            if (sameColumnNames)
-              this._setup.setCheckHeader(ps._check_header);
-          }
-        } else {  // take care of the case where the last file has header but this file does not.
-          this._setup.setCheckHeader(ps._check_header);
-        }
-
       }
 
-
+      // good file, parse.
       parseChunk(cidx++, din, nextChunk);
 
-      if (is.available() <= 0) {
-        parseChunk(cidx, din, nextChunk);     // Parse the remaining partial 32K buffer
+      if (is.available() <= 0) {     // Parse the remaining partial 32K buffer before quitting
+        parseChunk(cidx, din, nextChunk);
+      }
+    }
+    return zidx;
+  }
 
-        if (is instanceof  java.util.zip.ZipInputStream)
 
-          // sometimes we have system files that are directories and are zipped.  Need to remove them.
-          try {
-            while (((ZipInputStream) is).getNextEntry().isDirectory())
-              ;   // move to next file if it exists and is not a directory
-          } catch (Exception ex) {
-            Log.info("Hitting every file already.  Done!");
-          }
+  // ------------------------------------------------------------------------
+  // Zipped file; no parallel decompression; decompress into local chunks,
+  // parse local chunks; distribute chunks later.
+  ParseWriter streamParseZip( final InputStream is, final StreamParseWriter dout, InputStream bvs ) throws IOException {
+    // All output into a fresh pile of NewChunks, one per column
+    if (!_setup._parse_type.isParallelParseSupported) throw H2O.unimpl();
+    StreamData din = new StreamData(is);
+    StreamParseWriter nextChunk = dout;
+    int zidx = bvs.read(null, 0, 0); // Back-channel read of chunk index
+    assert zidx == 1;
+//    int count = 0;
 
-        if (is.available() > 0) {
-          din = new StreamData(is);
-          cidx = 0;
-        }
+    while (is.available() > 0) {  // loop over all files in zip file
+      zidx = readOneFile(is, dout, bvs, nextChunk, zidx); // read one file in
+
+      if (is.available() <= 0) {  // done reading one file, get the next one or quit if at the end
+        getNextFile(is, din);
       }
     }
 
