@@ -4,11 +4,11 @@ import water.H2O;
 import water.Iced;
 import water.Job;
 import water.Key;
-import water.util.Log;
 
 import java.io.IOException;
 import java.io.InputStream;
 import java.util.Arrays;
+import java.util.zip.ZipEntry;
 import java.util.zip.ZipInputStream;
 
 import static water.parser.DefaultParserProviders.GUESS_INFO;
@@ -100,13 +100,10 @@ public abstract class Parser extends Iced {
    */
   private boolean checkFileNHeader(final InputStream is, final StreamParseWriter dout, StreamData din, int cidx)
           throws IOException {
-
     byte[] headerBytes = ZipUtil.unzipForHeader(din.getChunkData(cidx), this._setup._chunk_size);
-
     ParseSetup ps = ParseSetup.guessSetup(null, headerBytes, GUESS_INFO, ParseSetup.GUESS_SEP,
             ParseSetup.GUESS_COL_CNT, this._setup._single_quotes, ParseSetup.GUESS_HEADER,
             null, null, null, null);
-
     // check to make sure datasets in file belong to the same dataset
     // just check for number for number of columns/separator here.  Ignore the column type, user can force it
     if ((this._setup._number_columns != ps._number_columns) || (this._setup._separator != ps._separator)) {
@@ -115,10 +112,8 @@ public abstract class Parser extends Iced {
               this._setup._number_columns + ".  Number of columns in new file = "+ps._number_columns+
               ".  This new file is skipped and not parsed.";
       dout.addError(new ParseWriter.ParseErr(warning, -1, -1L, -2L));
-
       // something is wrong
       return false;
-
     } else {
       // assume column names must appear in the first file.  If column names appear in first and other
       // files, they will be recognized.  Otherwise, if no column name ever appear in the first file, the other
@@ -135,7 +130,6 @@ public abstract class Parser extends Iced {
               break;
             }
           }
-
           if (sameColumnNames)
             this._setup.setCheckHeader(ps._check_header);
         }
@@ -143,7 +137,6 @@ public abstract class Parser extends Iced {
         this._setup.setCheckHeader(ps._check_header);
       }
     }
-
     return true;  // everything is fine
   }
 
@@ -151,23 +144,13 @@ public abstract class Parser extends Iced {
    * This method will try to get the next file to be parsed.  It will skip over directories if encountered.
    *
    * @param is
-   * @param din
    * @throws IOException
    */
-  private void getNextFile(final InputStream is, StreamData din) throws IOException {
+  private void getNextFile(final InputStream is) throws IOException {
     if (is instanceof  java.util.zip.ZipInputStream) {
-
-      // sometimes we have system files that are directories and are zipped.  Need to remove them.
-      try { // when we are at the end of directory, getNextEntry() will return null.  If we call .isDirectory() on null,
-            // we will have a problem.  Previously, I do not call isDirectory() on getNextEntry() and that is why no
-            // exception was thrown.
-        while (((ZipInputStream) is).getNextEntry().isDirectory()) {
-          if (is.available() <= 0)   // move to next file if it exists and is not a directory
-            break;
-        }
-      } catch (Exception ex) {
-        Log.info("Reached end of directoryt");
-      }
+      ZipEntry ze = ((ZipInputStream) is).getNextEntry();
+      while (ze != null && ze.isDirectory())
+        ze = ((ZipInputStream) is).getNextEntry();
     }
   }
 
@@ -188,7 +171,8 @@ public abstract class Parser extends Iced {
                           StreamParseWriter nextChunk, int zidx) throws IOException {
     int cidx = 0;
     StreamData din = new StreamData(is);
-
+    if (!checkFileNHeader(is, dout, din, cidx))
+      return zidx;  // header is bad, quit now
     while (is.available() > 0) {
       int xidx = bvs.read(null, 0, 0); // Back-channel read of chunk index
       if (xidx > zidx) {  // Advanced chunk index of underlying ByteVec stream?
@@ -200,20 +184,9 @@ public abstract class Parser extends Iced {
         }
         nextChunk = nextChunk.nextChunk();
       }
-
-      if (cidx == 0) { // perform header check to make sure all files contain same dataset and skip header if needed
-        if (!checkFileNHeader(is, dout, din, cidx)) {
-          return zidx;  // header is bad, quit now
-        }
-      }
-
-      // good file, parse.
       parseChunk(cidx++, din, nextChunk);
-
-      if (is.available() <= 0) {     // Parse the remaining partial 32K buffer before quitting
-        parseChunk(cidx, din, nextChunk);
-      }
     }
+    parseChunk(cidx, din, nextChunk);
     return zidx;
   }
 
@@ -224,24 +197,18 @@ public abstract class Parser extends Iced {
   ParseWriter streamParseZip( final InputStream is, final StreamParseWriter dout, InputStream bvs ) throws IOException {
     // All output into a fresh pile of NewChunks, one per column
     if (!_setup._parse_type.isParallelParseSupported) throw H2O.unimpl();
-    StreamData din = new StreamData(is);
     StreamParseWriter nextChunk = dout;
     int zidx = bvs.read(null, 0, 0); // Back-channel read of chunk index
     assert zidx == 1;
-//    int count = 0;
-
     while (is.available() > 0) {  // loop over all files in zip file
       zidx = readOneFile(is, dout, bvs, nextChunk, zidx); // read one file in
-
       if (is.available() <= 0) {  // done reading one file, get the next one or quit if at the end
-        getNextFile(is, din);
+        getNextFile(is);
       }
     }
-
     nextChunk.close();
     bvs.close();
     is.close();
-
     if( dout != nextChunk ) dout.reduce(nextChunk);
     return dout;
   }
