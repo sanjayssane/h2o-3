@@ -168,10 +168,12 @@ public abstract class Parser extends Iced {
    * @throws IOException
    */
   private int readOneFile(final InputStream is, final StreamParseWriter dout, InputStream bvs,
-                          StreamParseWriter nextChunk, int zidx) throws IOException {
+                          StreamParseWriter nextChunk, int zidx, int fileIndex) throws IOException {
     int cidx = 0;
     StreamData din = new StreamData(is);
-    if (!checkFileNHeader(is, dout, din, cidx))
+
+    // only check header for 2nd file onward since guess setup is already done on first file.
+    if ((fileIndex > 0) && (!checkFileNHeader(is, dout, din, cidx)))
       return zidx;  // header is bad, quit now
     while (is.available() > 0) {
       int xidx = bvs.read(null, 0, 0); // Back-channel read of chunk index
@@ -200,8 +202,9 @@ public abstract class Parser extends Iced {
     StreamParseWriter nextChunk = dout;
     int zidx = bvs.read(null, 0, 0); // Back-channel read of chunk index
     assert zidx == 1;
+    int fileIndex = 0;  // count files being passed.  0 is first file, 1 is second and so on...
     while (is.available() > 0) {  // loop over all files in zip file
-      zidx = readOneFile(is, dout, bvs, nextChunk, zidx); // read one file in
+      zidx = readOneFile(is, dout, bvs, nextChunk, zidx, fileIndex++); // read one file in
       if (is.available() <= 0) {  // done reading one file, get the next one or quit if at the end
         getNextFile(is);
       }
